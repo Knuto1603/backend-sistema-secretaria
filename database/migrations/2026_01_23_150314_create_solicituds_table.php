@@ -9,15 +9,14 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('solicitud', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('user_id')->constrained()->onDelete('cascade');
-            $table->foreignId('tipo_solicitud_id')->constrained('tipo_solicitudes');
+            $table->uuid('id')->primary();
+            $table->foreignUuid('user_id')->constrained('users')->onDelete('cascade');
+            $table->foreignUuid('tipo_solicitud_id')->constrained('tipo_solicitudes');
 
             // Relación Opcional: Solo si la solicitud es sobre un curso específico
-            $table->foreignId('programacion_id')->nullable()->constrained('programacion_academica');
+            $table->foreignUuid('programacion_id')->nullable()->constrained('programacion_academica');
 
             // Campo Mágico: Aquí guardaremos cualquier dato extra en formato JSON
-            // Ej: {"ciclo_origen": "2025-1", "motivo_personal": "...", "prioridad": "alta"}
             $table->json('metadatos')->nullable();
 
             $table->text('motivo');
@@ -27,9 +26,10 @@ return new class extends Migration
             // Archivos
             $table->string('firma_digital_path')->nullable();
             $table->string('archivo_sustento_path')->nullable();
+            $table->string('archivo_sustento_nombre')->nullable();
 
             // Auditoría y Seguimiento
-            $table->foreignId('asignado_a')->nullable()->constrained('users'); // Quién la está revisando
+            $table->foreignUuid('asignado_a')->nullable()->constrained('users');
             $table->text('observaciones_admin')->nullable();
             $table->timestamps();
         });
@@ -37,6 +37,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('solicitudes');
+        Schema::dropIfExists('solicitud');
     }
 };

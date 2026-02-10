@@ -9,9 +9,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('tipo_solicitudes', function (Blueprint $table) {
-            $table->id();
-            $table->string('nombre'); // Ej: Cupo Especial, Rectificación, etc.
-            $table->string('codigo')->unique(); // Ej: CUPO_ESP, RECT_ACTA
+            $table->uuid('id')->primary();
+            $table->string('nombre');
+            $table->string('codigo')->unique();
             $table->text('descripcion')->nullable();
             $table->boolean('requiere_archivo')->default(true);
             $table->boolean('activo')->default(true);

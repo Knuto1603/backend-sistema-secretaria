@@ -10,44 +10,44 @@ return new class extends Migration
     {
         // 1. Áreas Académicas
         Schema::create('areas', function (Blueprint $table) {
-            $table->id();
+            $table->uuid('id')->primary();
             $table->string('nombre')->unique();
             $table->timestamps();
         });
 
         // 2. Docentes
         Schema::create('docentes', function (Blueprint $table) {
-            $table->id();
+            $table->uuid('id')->primary();
             $table->string('nombre_completo');
             $table->timestamps();
         });
 
         // 3. Catálogo de Cursos (La materia como tal)
         Schema::create('cursos', function (Blueprint $table) {
-            $table->id();
-            $table->string('codigo')->unique(); // Ej: INF302
+            $table->uuid('id')->primary();
+            $table->string('codigo')->unique();
             $table->string('nombre');
-            $table->foreignId('area_id')->constrained();
+            $table->foreignUuid('area_id')->constrained('areas');
             $table->timestamps();
         });
 
         // 4. Periodos Académicos (2026-0, 2026-1, etc.)
         Schema::create('periodos', function (Blueprint $table) {
-            $table->id();
-            $table->string('nombre')->unique(); // Ej: 2026-I
-            $table->boolean('activo')->default(false); // Para saber cuál es el ciclo actual
+            $table->uuid('id')->primary();
+            $table->string('nombre')->unique();
+            $table->boolean('activo')->default(false);
             $table->timestamps();
         });
 
         // 5. Programación Académica (La unión de todo lo anterior + datos del Excel)
         Schema::create('programacion_academica', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('curso_id')->constrained();
-            $table->foreignId('periodo_id')->constrained();
-            $table->foreignId('docente_id')->nullable()->constrained();
+            $table->uuid('id')->primary();
+            $table->foreignUuid('curso_id')->constrained('cursos');
+            $table->foreignUuid('periodo_id')->constrained('periodos');
+            $table->foreignUuid('docente_id')->nullable()->constrained('docentes');
 
-            $table->string('clave'); // Clave del excel
-            $table->string('grupo'); // A, B, C...
+            $table->string('clave');
+            $table->string('grupo');
             $table->string('seccion')->nullable();
             $table->string('aula')->nullable();
             $table->string('n_acta')->nullable();
