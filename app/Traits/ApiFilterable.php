@@ -2,6 +2,7 @@
 
 namespace App\Traits;
 
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,9 +16,9 @@ trait ApiFilterable
      * @param Request $request El objeto Request de Laravel
      * @param array $searchFields Campos en los que se debe buscar (ej: ['nombre', 'codigo'])
      * @param array $relationships Relaciones a buscar (ej: ['curso' => ['nombre', 'codigo']])
-     * @return JsonResponse
+     * @return LengthAwarePaginator
      */
-    protected function applyFiltersAndPaginate(Builder $query, Request $request, array $searchFields = [], array $relationships = [])
+    protected function applyFiltersAndPaginate(Builder $query, Request $request, array $searchFields = [], array $relationships = []): LengthAwarePaginator
     {
         // 1. Lógica de Búsqueda Global (Search)
         if ($request->filled('search')) {
@@ -66,6 +67,15 @@ trait ApiFilterable
         // 3. Lógica de Paginación
         $perPage = $request->get('per_page', 10);
 
-        return response()->json($query->latest()->paginate($perPage));
+        return $query->latest()->paginate($perPage);
+    }
+
+    /**
+     * Aplica filtros y devuelve respuesta JSON directamente.
+     * Método de conveniencia para mantener compatibilidad.
+     */
+    protected function applyFiltersAndPaginateJson(Builder $query, Request $request, array $searchFields = [], array $relationships = []): JsonResponse
+    {
+        return response()->json($this->applyFiltersAndPaginate($query, $request, $searchFields, $relationships));
     }
 }
