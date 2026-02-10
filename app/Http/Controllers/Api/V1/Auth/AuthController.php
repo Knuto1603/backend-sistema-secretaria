@@ -2,75 +2,38 @@
 
 namespace App\Http\Controllers\Api\V1\Auth;
 
+use App\DTOs\Auth\LoginDTO;
 use App\Http\Controllers\Controller;
-use App\Models\User;
+use App\Http\Requests\Auth\LoginRequest;
+use App\Services\AuthService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
-    /**
-     * Handle user login and token generation.
-     */
-    public function login(Request $request)
+    public function __construct(
+        protected AuthService $authService
+    ) {}
+
+    public function login(LoginRequest $request): JsonResponse
     {
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required',
-            'device_name' => 'required' // Nombre del dispositivo o navegador
-        ]);
+        $dto = LoginDTO::fromRequest($request->validated());
+        $response = $this->authService->login($dto);
 
-        $user = User::where('email', $request->email)->first();
-
-        if (! $user || ! Hash::check($request->password, $user->password)) {
-            throw ValidationException::withMessages([
-                'email' => ['Las credenciales proporcionadas son incorrectas.'],
-            ]);
-        }
-
-        // Creamos el token de Sanctum
-        $token = $user->createToken($request->device_name)->plainTextToken;
-
-        return response()->json([
-            'status' => 'success',
-            'access_token' => $token,
-            'token_type' => 'Bearer',
-            'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'roles' => $user->getRoleNames(), // Spatie method
-                'permissions' => $user->getAllPermissions()->pluck('name')
-            ]
-        ]);
+        return $this->success($response->toArray(), 'Inicio de sesión exitoso');
     }
 
-    /**
-     * Get authenticated user profile with roles.
-     */
-    public function me(Request $request)
+    public function me(Request $request): JsonResponse
     {
-        $user = $request->user();
+        $userDTO = $this->authService->getAuthenticatedUser($request->user());
 
-        return response()->json([
-            'id' => $user->id,
-            'name' => $user->name,
-            'email' => $user->email,
-            'roles' => $user->getRoleNames(),
-            'permissions' => $user->getAllPermissions()->pluck('name')
-        ]);
+        return $this->success($userDTO->toArray(), 'Usuario autenticado');
     }
 
-    /**
-     * Revoke tokens on logout.
-     */
-    public function logout(Request $request)
+    public function logout(Request $request): JsonResponse
     {
-        $request->user()->currentAccessToken()->delete();
+        $this->authService->logout($request->user());
 
-        return response()->json([
-            'message' => 'Sesion cerrada exitosamente'
-        ]);
+        return $this->success(null, 'Sesión cerrada exitosamente');
     }
 }
