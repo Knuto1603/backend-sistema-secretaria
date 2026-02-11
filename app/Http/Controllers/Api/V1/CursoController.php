@@ -2,31 +2,36 @@
 
 namespace App\Http\Controllers\Api\V1;
 
-use App\Models\Curso;
-use App\Models\Solicitud;
-use App\Traits\ApiFilterable;
+use App\Http\Controllers\Controller;
+use App\Services\CursoService;
+use App\Transformers\CursoTransformer;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 
-class CursoController
+class CursoController extends Controller
 {
-    use ApiFilterable;
+    public function __construct(
+        protected CursoService $service,
+        protected CursoTransformer $transformer
+    ) {}
 
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
-        $query = Curso::select('cursos.*');
-        return $this->applyFiltersAndPaginate($query, $request,[ 'nombre', 'codigo'
-        ]);
+        $result = $this->service->getPaginated($request);
+
+        $items = $this->transformer->collection(collect($result->items()));
+
+        return $this->paginated($items, $result, 'Lista de cursos');
     }
 
-    public function show($id)
+    public function show(string $id): JsonResponse
     {
-        $curso = Curso::find($id);
+        $curso = $this->service->findById($id);
 
         if (!$curso) {
-            return response()->json(['error' => 'Curso no encontrado.'], 404);
+            return $this->notFound('Curso no encontrado');
         }
 
-        return response()->json($curso);
+        return $this->success($this->transformer->toArray($curso));
     }
 }
