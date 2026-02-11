@@ -2,11 +2,18 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-// --- MODELO AREA ---
-class Area extends Model {
+class Area extends Model
+{
+    use HasUuids;
+
     protected $fillable = ['nombre'];
-    public function cursos(): HasMany { return $this->hasMany(Curso::class); }
+
+    public function cursos(): HasMany
+    {
+        return $this->hasMany(Curso::class);
+    }
 }
