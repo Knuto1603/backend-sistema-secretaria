@@ -5,9 +5,13 @@ namespace App\Services;
 use App\DTOs\Solicitud\CreateSolicitudDTO;
 use App\Models\Solicitud;
 use App\Models\User;
+use App\Repositories\Contracts\ProgramacionRepositoryInterface;
 use App\Repositories\Contracts\SolicitudRepositoryInterface;
 use App\Repositories\Contracts\TipoSolicitudRepositoryInterface;
+use App\Traits\ApiFilterable;
+use App\Transformers\SolicitudTransformer;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -15,14 +19,39 @@ use Exception;
 
 class SolicitudService
 {
+    use ApiFilterable;
+
     public function __construct(
-        protected SolicitudRepositoryInterface $solicitudRepository,
-        protected TipoSolicitudRepositoryInterface $tipoSolicitudRepository
+        protected SolicitudRepositoryInterface $repository,
+        protected TipoSolicitudRepositoryInterface $tipoSolicitudRepository,
+        protected ProgramacionRepositoryInterface $programacionRepository,
+        protected SolicitudTransformer $transformer
     ) {}
 
     public function create(CreateSolicitudDTO $dto, User $user): Solicitud
     {
         return DB::transaction(function () use ($dto, $user) {
+            // Obtener la programación para conocer el curso
+            $programacion = $this->programacionRepository->findById($dto->programacion_id);
+
+            if (!$programacion) {
+                throw new Exception('La programación seleccionada no existe.');
+            }
+
+            if (!$programacion->curso_id) {
+                throw new Exception('La programación no tiene un curso asociado.');
+            }
+
+            // Verificar que el periodo esté activo
+            if (!$programacion->periodo || !$programacion->periodo->activo) {
+                throw new Exception('No se pueden presentar solicitudes para periodos académicos inactivos.');
+            }
+
+            // Verificar si ya existe una solicitud activa para este curso
+            if ($this->repository->existsSolicitudActivaParaCurso($user->id, $programacion->curso_id)) {
+                throw new Exception('Ya tienes una solicitud activa para este curso. No puedes presentar otra hasta que sea resuelta.');
+            }
+
             $tipoSolicitud = $this->tipoSolicitudRepository->findByCode('CUPO_EXT');
 
             if (!$tipoSolicitud) {
@@ -39,7 +68,7 @@ class SolicitudService
                 $sustentoPath = $dto->archivo_sustento->store('sustentos', 'public');
             }
 
-            return $this->solicitudRepository->create([
+            $solicitud = $this->repository->create([
                 'user_id' => $user->id,
                 'tipo_solicitud_id' => $tipoSolicitud->id,
                 'programacion_id' => $dto->programacion_id,
@@ -53,22 +82,56 @@ class SolicitudService
                     'ip' => $dto->ip,
                 ]
             ]);
+
+            return $this->repository->findById($solicitud->id);
         });
     }
 
-    public function getByUser(User $user): LengthAwarePaginator
+    /**
+     * Obtiene solicitudes del usuario (para estudiantes)
+     */
+    public function getByUser(User $user, Request $request): LengthAwarePaginator
     {
-        return $this->solicitudRepository->findByUserId($user->id);
+        $perPage = $request->get('per_page', 10);
+        return $this->repository->findByUserId($user->id, $perPage);
+    }
+
+    /**
+     * Obtiene todas las solicitudes con filtros (para admin/secretaria)
+     */
+    public function getAll(Request $request): LengthAwarePaginator
+    {
+        $filters = [
+            'estado' => $request->get('estado'),
+            'search' => $request->get('search'),
+        ];
+
+        $perPage = $request->get('per_page', 10);
+
+        return $this->repository->getPaginated($filters, $perPage);
     }
 
     public function findById(string $id): ?Solicitud
     {
-        return $this->solicitudRepository->findById($id);
+        return $this->repository->findById($id);
     }
 
-    public function getPaginated(array $filters = [], int $perPage = 10): LengthAwarePaginator
+    /**
+     * Actualiza el estado de una solicitud
+     */
+    public function updateEstado(string $id, string $estado, ?string $observaciones = null, ?User $asignadoA = null): ?Solicitud
     {
-        return $this->solicitudRepository->getPaginated($filters, $perPage);
+        $data = ['estado' => $estado];
+
+        if ($observaciones !== null) {
+            $data['observaciones_admin'] = $observaciones;
+        }
+
+        if ($asignadoA !== null) {
+            $data['asignado_a'] = $asignadoA->id;
+        }
+
+        return $this->repository->update($id, $data);
     }
 
     protected function storeBase64Signature(string $base64, string $userId): string

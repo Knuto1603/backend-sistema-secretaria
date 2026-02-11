@@ -2,95 +2,118 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\DTOs\Solicitud\CreateSolicitudDTO;
 use App\Http\Controllers\Controller;
-use App\Models\Solicitud;
-use App\Models\TipoSolicitud;
-use App\Traits\ApiFilterable;
+use App\Http\Requests\Solicitud\CreateSolicitudRequest;
+use App\Services\SolicitudService;
+use App\Transformers\SolicitudTransformer;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
+use Exception;
 
 class SolicitudController extends Controller
 {
-    use ApiFilterable;
+    public function __construct(
+        protected SolicitudService $service,
+        protected SolicitudTransformer $transformer
+    ) {}
 
     /**
-     * Procesa el registro de una nueva solicitud enviada vía FormData.
+     * Crear nueva solicitud (estudiantes)
      */
-    public function store(Request $request)
+    public function store(CreateSolicitudRequest $request): JsonResponse
     {
-        // 1. Validación de entrada (Laravel detecta archivos automáticamente en el Request)
-        $request->validate([
-            'programacion_id' => 'required|exists:programacion_academica,id',
-            'motivo'          => 'required|string|min:20',
-            'firma'           => 'required|string', // Se recibe como string Base64
-            'archivo_sustento' => 'nullable|file|mimes:pdf,jpg,png|max:2048', // Máximo 2MB
-        ]);
+        try {
+            $dto = CreateSolicitudDTO::fromRequest(
+                $request->validated(),
+                $request->file('archivo_sustento'),
+                $request->userAgent(),
+                $request->ip()
+            );
 
-        return DB::transaction(function () use ($request) {
-            $user = Auth::user();
+            $solicitud = $this->service->create($dto, $request->user());
 
-            $tipoSolicitud = TipoSolicitud::where('codigo', 'CUPO_EXT')->first();
-
-            if (!$tipoSolicitud) {
-                return response()->json(['error' => 'Configuración de tipos de solicitud incompleta.'], 500);
-            }
-
-            // 3. Procesar la firma digital (Base64 a imagen física)
-            $firmaPath = $this->storeBase64Signature($request->firma, $user->id);
-
-            // 4. Procesar el archivo de sustento si existe
-            $sustentoPath = null;
-            $sustentoNombre = null;
-
-            if ($request->hasFile('archivo_sustento')) {
-                $file = $request->file('archivo_sustento');
-                $sustentoNombre = $file->getClientOriginalName();
-                // Guardamos en 'public/sustentos' para que sea accesible vía storage:link
-                $sustentoPath = $file->store('sustentos', 'public');
-            }
-
-            // 5. Crear el registro en la base de datos
-            $solicitud = Solicitud::create([
-                'user_id'           => $user->id,
-                'tipo_solicitud_id' => $tipoSolicitud->id,
-                'programacion_id'   => $request->programacion_id,
-                'motivo'            => $request->motivo,
-                'firma_digital_path' => $firmaPath,
-                'archivo_sustento_path' => $sustentoPath,
-                'archivo_sustento_nombre' => $sustentoNombre,
-                'estado'            => 'pendiente',
-                'metadatos'         => [
-                    'user_agent' => $request->userAgent(),
-                    'ip'         => $request->ip(),
-                ]
-            ]);
-
-            return response()->json([
-                'status'  => 'success',
-                'message' => 'Solicitud enviada exitosamente',
-                'data'    => $solicitud
-            ], 201);
-        });
+            return $this->created(
+                $this->transformer->toArray($solicitud),
+                'Solicitud enviada exitosamente'
+            );
+        } catch (Exception $e) {
+            // Errores de validación de negocio retornan 422
+            $businessErrors = ['Ya tienes una solicitud', 'periodos académicos inactivos', 'no existe', 'no tiene un curso'];
+            $isBusinessError = collect($businessErrors)->contains(fn($msg) => str_contains($e->getMessage(), $msg));
+            $code = $isBusinessError ? 422 : 500;
+            return $this->error($e->getMessage(), $code);
+        }
     }
 
     /**
-     * Helper privado para decodificar y guardar la firma Base64.
+     * Listar solicitudes del usuario autenticado (estudiantes)
      */
-    private function storeBase64Signature(string $base64, int $userId): string
+    public function misSolicitudes(Request $request): JsonResponse
     {
-        // Limpiar el prefijo data:image/png;base64,
-        if (Str::contains($base64, ',')) {
-            $base64 = explode(',', $base64)[1];
+        $result = $this->service->getByUser($request->user(), $request);
+        $items = $this->transformer->collection(collect($result->items()));
+
+        return $this->paginated($items, $result, 'Mis solicitudes');
+    }
+
+    /**
+     * Listar todas las solicitudes (admin/secretaria/decano)
+     */
+    public function index(Request $request): JsonResponse
+    {
+        $result = $this->service->getAll($request);
+        $items = $this->transformer->collection(collect($result->items()));
+
+        return $this->paginated($items, $result, 'Lista de solicitudes');
+    }
+
+    /**
+     * Ver detalle de una solicitud
+     */
+    public function show(string $id, Request $request): JsonResponse
+    {
+        $solicitud = $this->service->findById($id);
+
+        if (!$solicitud) {
+            return $this->notFound('Solicitud no encontrada');
         }
 
-        $decodedData = base64_decode($base64);
-        $fileName = "firmas/signature_u{$userId}_" . now()->timestamp . ".png";
+        // Verificar que el estudiante solo pueda ver sus propias solicitudes
+        $user = $request->user();
+        if ($user->hasRole('estudiante') && $solicitud->user_id !== $user->id) {
+            return $this->forbidden('No tienes permiso para ver esta solicitud');
+        }
 
-        Storage::disk('public')->put($fileName, $decodedData);
+        return $this->success($this->transformer->toArray($solicitud));
+    }
 
-        return $fileName;
+    /**
+     * Actualizar estado de una solicitud (admin/secretaria/decano)
+     */
+    public function updateEstado(Request $request, string $id): JsonResponse
+    {
+        $request->validate([
+            'estado' => 'required|in:pendiente,en_revision,aprobada,rechazada',
+            'observaciones' => 'nullable|string|max:1000',
+        ]);
+
+        $solicitud = $this->service->findById($id);
+
+        if (!$solicitud) {
+            return $this->notFound('Solicitud no encontrada');
+        }
+
+        $solicitud = $this->service->updateEstado(
+            $id,
+            $request->estado,
+            $request->observaciones,
+            $request->user()
+        );
+
+        return $this->success(
+            $this->transformer->toArray($solicitud),
+            'Estado actualizado exitosamente'
+        );
     }
 }
